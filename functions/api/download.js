@@ -1,4 +1,4 @@
-import { json, authorize, gh, validId, releaseFiles } from "../../lib/github.js";
+import { json, authorize, gh, validId, releaseFiles } from "../_lib.js";
 
 export async function onRequestGet({ request, env }) {
   if (!authorize(request, env)) return json({ error: "Wrong access key." }, 401);
