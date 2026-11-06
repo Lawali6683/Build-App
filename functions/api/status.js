@@ -1,4 +1,4 @@
-import { json, authorize, gh, validId, releaseFiles } from "../../lib/github.js";
+import { json, authorize, gh, validId, releaseFiles } from "../_lib.js";
 
 const KEYS = { "Prepare project": "prepare", "Android app": "android", "iPhone app": "ios", "Publish files": "publish" };
 const state = (j) => j.status !== "completed" ? (j.status === "in_progress" ? "running" : "pending")
