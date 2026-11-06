@@ -1,4 +1,4 @@
-import { json, authorize, gh, b64 } from "../../lib/github.js";
+import { json, authorize, gh, b64 } from "../_lib.js";
 
 const PNG = [0x89, 0x50, 0x4e, 0x47];
 
