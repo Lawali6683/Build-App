@@ -7,6 +7,20 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <link rel="stylesheet" href="style.css">
+<style>
+.note{border-color:var(--acc);border-left-width:6px}
+.note summary{cursor:pointer;font-weight:800;font-size:16px;display:flex;gap:10px;align-items:center;list-style:none}
+.note summary::-webkit-details-marker{display:none}
+.note summary .chev{margin-left:auto;transition:transform .2s}
+.note[open] summary .chev{transform:rotate(180deg)}
+.note ul,.note ol{margin:10px 0 0;padding-left:20px}
+.note li{margin:7px 0}
+.pill{display:inline-flex;align-items:center;gap:8px;margin-top:6px;padding:8px 10px;border:1px dashed var(--line);border-radius:10px;background:var(--soft);font:600 13px ui-monospace,Menlo,Consolas,monospace;word-break:break-all}
+.codecard{margin-top:14px;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.codecard .top{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;background:var(--soft);font-weight:700;font-size:13px}
+.codecard pre{margin:0;padding:14px;background:#0b0d24;color:#dfe3ff;overflow:auto;max-height:320px;font:12px/1.55 ui-monospace,Menlo,Consolas,monospace}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;background:var(--soft);padding:1px 5px;border-radius:6px}
+</style>
 </head>
 <body>
 <div class="gate" id="gate">
@@ -31,6 +45,43 @@
 <div class="logo"><img src="https://i.imgur.com/3Rk6AoF.jpeg" alt="IDT" referrerpolicy="no-referrer"></div>
 <div><h1>IDT App Builder</h1><p>Turn your website into Android, iPhone and Windows apps</p></div>
 </header>
+
+<details class="card note" open>
+<summary><i class="fa-solid fa-circle-info" style="color:var(--acc)"></i> Before you start<i class="fa-solid fa-chevron-down chev"></i></summary>
+<p class="hint" style="margin-top:12px">Does your project call its own server, for example <code>fetch('/api/movies')</code>?</p>
+<ul>
+<li><b>No.</b> Your project only has pages, links and images, or it only uses other companies' services. You do not need to do anything here. Leave the API server section empty.</li>
+<li><b>Yes.</b> Add one small file to your project so the installed app is allowed to talk to your server. Follow the steps below.</li>
+</ul>
+<ol>
+<li>Open your project repository on GitHub.</li>
+<li>Tap <b>Add file</b>, then <b>Create new file</b>.</li>
+<li>In the file name box, paste this name. If you do not have a <b>functions</b> folder yet, typing the slash creates it for you.<br><span class="pill"><span id="mwName">functions/_middleware.js</span><button class="chip" data-copy="mwName" type="button" aria-label="Copy file name"><i class="fa-regular fa-copy"></i><span>Copy</span></button></span></li>
+<li>Paste the code below into the file and tap <b>Commit changes</b>. Cloudflare publishes it automatically.</li>
+</ol>
+<div class="codecard">
+<div class="top"><span><i class="fa-solid fa-code"></i> functions/_middleware.js</span><button class="chip" data-copy="mwCode" type="button" aria-label="Copy code"><i class="fa-regular fa-copy"></i><span>Copy</span></button></div>
+<pre><code id="mwCode">const ORIGINS = ["https://localhost", "capacitor://localhost", "http://localhost", "app://localhost"];
+
+export async function onRequest({ request, next }) {
+  const o = request.headers.get("Origin");
+  const ok = ORIGINS.includes(o);
+  const h = {
+    "Access-Control-Allow-Origin": o,
+    "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type,Authorization",
+    Vary: "Origin",
+  };
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: ok ? h : {} });
+  const r = await next();
+  if (!ok) return r;
+  const n = new Response(r.body, r);
+  for (const k in h) n.headers.set(k, h[k]);
+  return n;
+}</code></pre>
+</div>
+<p class="hint" style="margin:12px 0 0">Already have a <code>functions/_middleware.js</code> file? Do not replace it. Add the <code>ORIGINS</code> line and the checks into your existing file, or ask your developer to merge them.</p>
+</details>
 
 <section class="card">
 <h2><span class="n">1</span> Project source</h2>
@@ -105,8 +156,8 @@
 </section>
 
 <section class="card">
-<h2><span class="n">3</span> API server</h2>
-<p class="hint">Calls that start with the API paths are sent to this domain from inside the app.</p>
+<h2><span class="n">3</span> API server (optional)</h2>
+<p class="hint">Only needed if your project calls its own server, like <code>fetch('/api/movies')</code>. If it does not, leave both boxes as they are. With the Website source, your website address is used automatically.</p>
 <label for="api">API base URL</label>
 <input type="url" id="api" placeholder="https://idt.pages.dev" autocomplete="off">
 <div class="err" id="apiErr"></div>
@@ -154,5 +205,36 @@
 </div>
 <div class="toast" id="toast" role="status"></div>
 <script type="module" src="app.js"></script>
+<script>
+(function () {
+  function done(b) {
+    var i = b.querySelector("i"), s = b.querySelector("span"), old = i.className;
+    i.className = "fa-solid fa-check";
+    s.textContent = "Copied";
+    setTimeout(function () { i.className = old; s.textContent = "Copy"; }, 1600);
+  }
+  function legacy(t) {
+    var a = document.createElement("textarea");
+    a.value = t;
+    a.style.position = "fixed";
+    a.style.opacity = "0";
+    document.body.appendChild(a);
+    a.select();
+    try { document.execCommand("copy"); } catch (e) {}
+    a.remove();
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-copy]");
+    if (!b) return;
+    var t = document.getElementById(b.getAttribute("data-copy")).textContent.trim();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(t).then(function () { done(b); }, function () { legacy(t); done(b); });
+    } else {
+      legacy(t);
+      done(b);
+    }
+  });
+})();
+</script>
 </body>
 </html>
