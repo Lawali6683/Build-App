@@ -29,16 +29,18 @@ export async function onRequestPost({ request, env }) {
   const version = parseInt(v("version") || "1", 10);
   const shareId = v("shareId") || randomId();
 
-  let apiBase;
-  try {
-    const u = new URL(v("apiBase"));
-    if (u.protocol !== "https:") throw 0;
-    apiBase = u.href.replace(/\/+$/, "");
-  } catch { return json({ error: "API base URL must be a valid https:// address." }, 400); }
+  let apiBase = "";
+  if (v("apiBase")) {
+    try {
+      const u = new URL(v("apiBase"));
+      if (u.protocol !== "https:") throw 0;
+      apiBase = u.href.replace(/\/+$/, "");
+    } catch { return json({ error: "API base URL must be a valid https:// address." }, 400); }
+  }
 
   if (!/^[A-Za-z0-9][A-Za-z0-9 .\-]{0,29}$/.test(appName)) return json({ error: "App name: 1-30 letters, numbers, spaces, dots or dashes." }, 400);
   if (!/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/.test(packageId)) return json({ error: "Package ID must look like com.idt.movies." }, 400);
-  if (!/^\/[\w\-./]*(,\s*\/[\w\-./]*)*$/.test(apiPaths)) return json({ error: "API paths must start with / and be separated by commas." }, 400);
+  if (apiBase && !/^\/[\w\-./]*(,\s*\/[\w\-./]*)*$/.test(apiPaths)) return json({ error: "API paths must start with / and be separated by commas." }, 400);
   if (startPage && (startPage.includes("..") || !/^\/?[\w\-./]*(\?[\w\-=&.%]*)?(#[\w\-\/=&.%]*)?$/.test(startPage))) return json({ error: "Start page must look like register.html or /dashboard.html." }, 400);
   if (!/^[\w./-]{1,100}$/.test(branch) || branch.includes("..")) return json({ error: "Invalid branch name." }, 400);
   if (!targets.length) return json({ error: "Choose at least one file type." }, 400);
