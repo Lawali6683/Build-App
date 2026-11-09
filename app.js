@@ -206,8 +206,10 @@ function validate() {
   const sp = $("start").value.trim();
   if (sp && (sp.includes("..") || !START_RE.test(sp))) set("startErr", "Use a path like register.html or /dashboard.html");
   if (!S.icon && !S.reuse) set("iconErr", "Upload a valid app icon.");
-  try { if (new URL($("api").value.trim()).protocol !== "https:") throw 0; } catch { set("apiErr", "Enter your live API domain, starting with https://"); }
-  if (!/^\/[\w\-./]*(,\s*\/[\w\-./]*)*$/.test($("paths").value.trim())) set("pathsErr", "Paths must start with / and be separated by commas.");
+  if ($("api").value.trim()) {
+    try { if (new URL($("api").value.trim()).protocol !== "https:") throw 0; } catch { set("apiErr", "Enter your live API domain, starting with https://"); }
+    if (!/^\/[\w\-./]*(,\s*\/[\w\-./]*)*$/.test($("paths").value.trim())) set("pathsErr", "Paths must start with / and be separated by commas.");
+  }
   S.targets = [...document.querySelectorAll("[name=t]:checked")].map((x) => x.value);
   if (!S.targets.length) set("tgtErr", "Choose at least one file type.");
   return ok;
