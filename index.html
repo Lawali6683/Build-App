@@ -4,36 +4,74 @@
 <meta charset="utf-8">
 <title>IDT App Builder</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;700;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="wrap">
-<header>
-<svg class="logo" viewBox="0 0 48 48" role="img" aria-label="IDT logo"><rect width="48" height="48" rx="12" fill="#3b3bf5"/><path d="M8 36V12h5v24zM18 12h8c7 0 11 4.5 11 12s-4 12-11 12h-8zm5 4.6v14.8h2.6c4 0 6.1-2.8 6.1-7.4s-2.1-7.4-6.1-7.4z" fill="#fff"/><rect x="34" y="12" width="6" height="6" rx="1.5" fill="#ffb400"/></svg>
-<div><h1>IDT App Builder</h1><p>Turn your web project into Android and iPhone apps</p></div>
+<div class="gate" id="gate">
+<div class="gate-box">
+<div class="logo"><img src="https://i.imgur.com/3Rk6AoF.jpeg" alt="IDT" referrerpolicy="no-referrer"></div>
+<h1>IDT App Builder</h1>
+<p>Enter your 6-digit PIN</p>
+<div class="pin" id="pin">
+<input inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="Digit 1">
+<input inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="Digit 2">
+<input inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="Digit 3">
+<input inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="Digit 4">
+<input inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="Digit 5">
+<input inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="Digit 6">
+</div>
+<div class="err" id="pinErr"></div>
+</div>
+</div>
+
+<div class="wrap" id="app" hidden>
+<header class="hero">
+<div class="logo"><img src="https://i.imgur.com/3Rk6AoF.jpeg" alt="IDT" referrerpolicy="no-referrer"></div>
+<div><h1>IDT App Builder</h1><p>Turn your website into Android, iPhone and Windows apps</p></div>
 </header>
 
 <section class="card">
-<h2><i class="fa-solid fa-key"></i> Access key</h2>
-<label for="key">Team access key</label>
-<input type="password" id="key" autocomplete="current-password" placeholder="Enter your access key">
-</section>
-
-<section class="card">
-<h2><i class="fa-solid fa-folder-open"></i> 1. Project source</h2>
+<h2><span class="n">1</span> Project source</h2>
 <div class="tabs" role="tablist">
-<button class="tab" role="tab" aria-selected="true" data-src="github"><i class="fa-brands fa-github"></i> GitHub</button>
+<button class="tab" role="tab" aria-selected="true" data-src="repo"><i class="fa-brands fa-github"></i> My GitHub</button>
+<button class="tab" role="tab" aria-selected="false" data-src="github"><i class="fa-solid fa-link"></i> GitHub link</button>
+<button class="tab" role="tab" aria-selected="false" data-src="site"><i class="fa-solid fa-globe"></i> Website</button>
 <button class="tab" role="tab" aria-selected="false" data-src="zip"><i class="fa-solid fa-file-zipper"></i> ZIP file</button>
 </div>
-<div id="ghBox">
-<label for="src">GitHub repository</label>
+
+<div id="p-repo">
+<div id="ghConnect">
+<p class="hint">Connect your GitHub account, choose a repository and tap Done.</p>
+<button class="btn full" id="ghConnectBtn" type="button"><i class="fa-brands fa-github"></i> Connect GitHub</button>
+</div>
+<div id="ghPicker" hidden>
+<div class="gh-user"><span id="ghUser"></span><button class="chip" id="ghLogout" type="button"><i class="fa-solid fa-right-from-bracket"></i> Disconnect</button></div>
+<input type="text" id="repoSearch" placeholder="Search your repositories" autocomplete="off">
+<div class="repos" id="repoList"></div>
+<button class="btn full" id="repoDone" type="button" disabled><i class="fa-solid fa-check"></i> Done</button>
+</div>
+<div class="chosen" id="ghChosen" hidden>
+<i class="fa-solid fa-circle-check" style="color:var(--ok)"></i><b id="ghChosenName"></b>
+<button class="chip" id="ghChange" type="button">Change</button>
+</div>
+</div>
+
+<div id="p-github" hidden>
+<label for="src">GitHub repository link</label>
 <input type="url" id="src" placeholder="https://github.com/your-company/movie-app" autocomplete="off">
 <label for="branch">Branch (optional)</label>
 <input type="text" id="branch" placeholder="main">
 </div>
-<div id="zipBox" hidden>
+
+<div id="p-site" hidden>
+<label for="siteUrl">Website link</label>
+<input type="url" id="siteUrl" placeholder="https://idt.pages.dev" autocomplete="off">
+<p class="hint" style="margin-top:8px">All pages, styles, scripts and images are copied into the app.</p>
+</div>
+
+<div id="p-zip" hidden>
 <label>Project ZIP (up to 10 MB)</label>
 <input type="file" id="zip" accept=".zip" hidden>
 <button class="btn ghost" id="pickZip" type="button"><i class="fa-solid fa-upload"></i> Choose ZIP</button>
@@ -43,7 +81,7 @@
 </section>
 
 <section class="card">
-<h2><i class="fa-solid fa-mobile-screen"></i> 2. App details</h2>
+<h2><span class="n">2</span> App details</h2>
 <label for="name">App name</label>
 <input type="text" id="name" placeholder="IDT Movies" maxlength="30" autocomplete="off">
 <div class="err" id="nameErr"></div>
@@ -52,7 +90,7 @@
 <div class="err" id="pkgErr"></div>
 <label for="start">Start page (optional)</label>
 <input type="text" id="start" placeholder="register.html" autocomplete="off">
-<p class="hint" style="margin:6px 0 0">The page the app opens first. Leave empty to open index.html. Example: register.html or dashboard.html</p>
+<p class="hint" style="margin:6px 0 0">The page the app opens first. Leave empty to open index.html.</p>
 <div class="err" id="startErr"></div>
 <label>App icon</label>
 <div class="icon-row">
@@ -67,14 +105,25 @@
 </section>
 
 <section class="card">
-<h2><i class="fa-solid fa-server"></i> 3. API server address</h2>
-<p class="hint">Inside an app, <code>fetch('/api/movies')</code> has no website to reach. Every call that starts with the API paths below is sent to this domain.</p>
+<h2><span class="n">3</span> API server</h2>
+<p class="hint">Calls that start with the API paths are sent to this domain from inside the app.</p>
 <label for="api">API base URL</label>
-<input type="url" id="api" placeholder="https://misali.pages.dev" autocomplete="off">
+<input type="url" id="api" placeholder="https://idt.pages.dev" autocomplete="off">
 <div class="err" id="apiErr"></div>
 <label for="paths">API paths (comma separated)</label>
 <input type="text" id="paths" value="/api/" autocomplete="off">
 <div class="err" id="pathsErr"></div>
+</section>
+
+<section class="card">
+<h2><span class="n">4</span> Files to create</h2>
+<div class="opts">
+<label class="opt"><input type="checkbox" name="t" value="apk" checked><i class="fa-brands fa-android"></i><span>Android APK<small>Install directly on a phone</small></span></label>
+<label class="opt"><input type="checkbox" name="t" value="aab"><i class="fa-brands fa-google-play"></i><span>Google Play AAB<small>The file Google Play accepts</small></span></label>
+<label class="opt"><input type="checkbox" name="t" value="ipa"><i class="fa-brands fa-apple"></i><span>iPhone IPA<small>For App Store Connect</small></span></label>
+<label class="opt"><input type="checkbox" name="t" value="exe"><i class="fa-brands fa-windows"></i><span>Windows installer<small>Computer software</small></span></label>
+</div>
+<div class="err" id="tgtErr"></div>
 </section>
 
 <section class="card">
@@ -86,17 +135,24 @@
 <div class="err" id="genErr"></div>
 </section>
 
-<section class="card success-card" id="done" hidden>
-<h2><i class="fa-solid fa-circle-check"></i> App generated successfully</h2>
+<section class="card ok-card" id="done" hidden>
+<h2><i class="fa-solid fa-circle-check" style="color:var(--ok)"></i> App generated successfully</h2>
 <p class="hint" id="doneMsg"></p>
-<div class="dl">
-<button class="btn" data-dl="apk" type="button"><i class="fa-brands fa-android"></i><span>Download Android app (APK)<small>Install on a phone to test it like a normal app</small></span></button>
-<button class="btn" data-dl="aab" type="button"><i class="fa-brands fa-google-play"></i><span>Download Play Store file (AAB)<small>Named with your app name, ready to upload to Google Play</small></span></button>
-<button class="btn" data-dl="ipa" type="button"><i class="fa-brands fa-apple"></i><span>Download iPhone app (IPA)<small>Upload to App Store Connect for the App Store</small></span></button>
+<div class="dl" id="dl"></div>
+<label for="shareLink">Share link</label>
+<div class="copy">
+<input type="text" id="shareLink" readonly>
+<button class="btn ghost" id="copyLink" type="button"><i class="fa-regular fa-copy"></i></button>
 </div>
+</section>
+
+<section class="card">
+<h2><i class="fa-solid fa-clock-rotate-left" style="color:var(--pri)"></i> History</h2>
+<p class="hint">Apps you built. Share the link so others can download them.</p>
+<div class="hist" id="history"></div>
 </section>
 </div>
 <div class="toast" id="toast" role="status"></div>
-<script src="app.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>
