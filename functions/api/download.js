@@ -1,9 +1,8 @@
-import { json, authorize, gh, validId, releaseFiles } from "../_lib.js";
+import { json, gh, validId, releaseFiles } from "../_lib.js";
 
 export async function onRequestGet({ request, env }) {
-  if (!authorize(request, env)) return json({ error: "Wrong access key." }, 401);
   const p = new URL(request.url).searchParams, id = p.get("id"), type = p.get("type");
-  if (!validId(id) || !["apk", "aab", "ipa"].includes(type)) return json({ error: "Invalid request." }, 400);
+  if (!validId(id) || !["apk", "aab", "ipa", "exe"].includes(type)) return json({ error: "Invalid request." }, 400);
   const file = ((await releaseFiles(env, id)) || {})[type];
   if (!file) return json({ error: "File not found." }, 404);
   const r = await gh(env, `/repos/${env.GITHUB_REPO}/releases/assets/${file.id}`, { headers: { accept: "application/octet-stream" }, redirect: "follow" });
