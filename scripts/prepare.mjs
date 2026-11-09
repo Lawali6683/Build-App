@@ -11,8 +11,8 @@ const out = path.join(root, "out");
 const www = path.join(out, "www");
 const UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
 const GITHUB_URL = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+?(\.git)?\/?$/;
-const apiBase = C.apiBase.replace(/\/+$/, "");
-const apiPaths = C.apiPaths.split(",").map((s) => s.trim()).filter(Boolean);
+const apiBase = (C.apiBase || (C.sourceType === "site" ? new URL(C.source).origin : "")).replace(/\/+$/, "");
+const apiPaths = apiBase ? C.apiPaths.split(",").map((s) => s.trim()).filter(Boolean) : [];
 const safeName = C.appName.replace(/[^A-Za-z0-9]/g, "") || "App";
 
 const sh = (c, a, o = {}) => execFileSync(c, a, { stdio: "inherit", ...o });
