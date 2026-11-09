@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Download app | IDT</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="wrap" style="max-width:520px">
+<header class="hero">
+<div class="logo"><img src="https://i.imgur.com/3Rk6AoF.jpeg" alt="IDT" referrerpolicy="no-referrer"></div>
+<div><h1>IDT App Download</h1><p>Get the app for your device</p></div>
+</header>
+<div class="card center" id="state"><p class="hint" style="margin:0">Loading…</p></div>
+<div id="view" hidden>
+<div class="card center">
+<div class="phone"><div class="screen"><img id="appIcon" alt=""><b id="appName"></b><span id="appVer"></span></div></div>
+<h2 style="justify-content:center" id="appTitle"></h2>
+<p class="hint" id="appDate"></p>
+<div class="dl" id="platforms"></div>
+</div>
+</div>
+</main>
+<script type="module" src="get.js"></script>
+</body>
+</html>
