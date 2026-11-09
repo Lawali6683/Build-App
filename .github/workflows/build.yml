@@ -1,18 +1,11 @@
-name: Build mobile app
+name: Build apps
 run-name: Build ${{ inputs.job_id }}
 
 on:
   workflow_dispatch:
     inputs:
       job_id: { description: Job ID, required: true }
-      source_type: { description: github or zip, required: true }
-      source: { description: GitHub repository link, required: false, default: "" }
-      branch: { required: false, default: main }
-      app_name: { required: true }
-      package_id: { required: true }
-      api_base: { required: true }
-      api_paths: { required: false, default: /api/ }
-      start_page: { required: false, default: "" }
+      config: { description: Build settings, required: true }
 
 permissions:
   contents: write
@@ -22,8 +15,13 @@ jobs:
     name: Prepare project
     runs-on: ubuntu-latest
     outputs:
-      android_signing: ${{ steps.flags.outputs.android }}
+      apk: ${{ steps.flags.outputs.apk }}
+      aab: ${{ steps.flags.outputs.aab }}
+      signed: ${{ steps.flags.outputs.signed }}
+      android: ${{ steps.flags.outputs.android }}
       ios: ${{ steps.flags.outputs.ios }}
+      desktop: ${{ steps.flags.outputs.desktop }}
+      version: ${{ steps.flags.outputs.version }}
     env:
       JOB_ID: ${{ inputs.job_id }}
     steps:
@@ -32,29 +30,41 @@ jobs:
         with:
           ref: jobs
           path: jobdata
-          sparse-checkout: jobs/${{ inputs.job_id }}
+          sparse-checkout: |
+            icons
+            jobs/${{ inputs.job_id }}
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
       - name: Import and prepare the project
         env:
-          SOURCE_TYPE: ${{ inputs.source_type }}
-          SOURCE: ${{ inputs.source }}
-          BRANCH: ${{ inputs.branch }}
-          APP_NAME: ${{ inputs.app_name }}
-          PACKAGE_ID: ${{ inputs.package_id }}
-          API_BASE: ${{ inputs.api_base }}
-          API_PATHS: ${{ inputs.api_paths }}
-          START_PAGE: ${{ inputs.start_page }}
-          SOURCE_TOKEN: ${{ secrets.SOURCE_TOKEN }}
+          CONFIG: ${{ inputs.config }}
+          TOKEN_KEY: ${{ secrets.TOKEN_KEY }}
         run: node scripts/prepare.mjs
-      - name: Check which signing keys exist
+      - name: Decide what to build
         id: flags
         env:
           KS: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           IOSK: ${{ secrets.IOS_API_KEY_ID }}
         run: |
-          if [ -n "$KS" ]; then echo "android=true" >> "$GITHUB_OUTPUT"; else echo "android=false" >> "$GITHUB_OUTPUT"; fi
-          if [ -n "$IOSK" ]; then echo "ios=true" >> "$GITHUB_OUTPUT"; else echo "ios=false" >> "$GITHUB_OUTPUT"; fi
+          T=",$(node -p "require('./out/config.json').targets.join(',')"),"
+          V=$(node -p "require('./out/config.json').version")
+          want() { case "$T" in *",$1,"*) echo true;; *) echo false;; esac; }
+          APK=$(want apk); AAB=$(want aab); IPA=$(want ipa); EXE=$(want exe)
+          SIGNED=false
+          if [ -n "$KS" ]; then SIGNED=true; fi
+          ANDROID=false
+          if [ "$APK" = true ] || { [ "$AAB" = true ] && [ "$SIGNED" = true ]; }; then ANDROID=true; fi
+          IOS=false
+          if [ "$IPA" = true ] && [ -n "$IOSK" ]; then IOS=true; fi
+          {
+            echo "apk=$APK"
+            echo "aab=$AAB"
+            echo "signed=$SIGNED"
+            echo "android=$ANDROID"
+            echo "ios=$IOS"
+            echo "desktop=$EXE"
+            echo "version=$V"
+          } >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: web
@@ -71,6 +81,7 @@ jobs:
   android:
     name: Android app
     needs: prepare
+    if: needs.prepare.outputs.android == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -89,9 +100,12 @@ jobs:
           npx capacitor-assets generate --android --iconBackgroundColor '#ffffff' --iconBackgroundColorDark '#ffffff'
           npx cap sync android
           sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/" android/app/build.gradle
-      - name: Build and sign (release)
-        if: needs.prepare.outputs.android_signing == 'true'
+          sed -i "s/versionName \"1.0\"/versionName \"1.0.${{ needs.prepare.outputs.version }}\"/" android/app/build.gradle
+      - name: Build and sign
+        if: needs.prepare.outputs.signed == 'true'
         env:
+          WANT_APK: ${{ needs.prepare.outputs.apk }}
+          WANT_AAB: ${{ needs.prepare.outputs.aab }}
           KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -102,14 +116,21 @@ jobs:
           mkdir -p dist
           echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
           cd out/android
-          ./gradlew assembleRelease bundleRelease --no-daemon
+          TASKS=""
+          if [ "$WANT_APK" = true ]; then TASKS="$TASKS assembleRelease"; fi
+          if [ "$WANT_AAB" = true ]; then TASKS="$TASKS bundleRelease"; fi
+          ./gradlew $TASKS --no-daemon
           BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
-          "$BT/zipalign" -p -f 4 app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/aligned.apk"
-          "$BT/apksigner" sign --ks "$RUNNER_TEMP/release.jks" --ks-pass env:KS_PASS --ks-key-alias "$KS_ALIAS" --key-pass env:KEY_PASS --out "$GITHUB_WORKSPACE/dist/$SAFE.apk" "$RUNNER_TEMP/aligned.apk"
-          cp app/build/outputs/bundle/release/app-release.aab "$GITHUB_WORKSPACE/dist/$SAFE.aab"
-          jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore "$RUNNER_TEMP/release.jks" -storepass:env KS_PASS -keypass:env KEY_PASS "$GITHUB_WORKSPACE/dist/$SAFE.aab" "$KS_ALIAS"
-      - name: Build test APK (no release key set up)
-        if: needs.prepare.outputs.android_signing != 'true'
+          if [ "$WANT_APK" = true ]; then
+            "$BT/zipalign" -p -f 4 app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/aligned.apk"
+            "$BT/apksigner" sign --ks "$RUNNER_TEMP/release.jks" --ks-pass env:KS_PASS --ks-key-alias "$KS_ALIAS" --key-pass env:KEY_PASS --out "$GITHUB_WORKSPACE/dist/$SAFE.apk" "$RUNNER_TEMP/aligned.apk"
+          fi
+          if [ "$WANT_AAB" = true ]; then
+            cp app/build/outputs/bundle/release/app-release.aab "$GITHUB_WORKSPACE/dist/$SAFE.aab"
+            jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore "$RUNNER_TEMP/release.jks" -storepass:env KS_PASS -keypass:env KEY_PASS "$GITHUB_WORKSPACE/dist/$SAFE.aab" "$KS_ALIAS"
+          fi
+      - name: Build test APK
+        if: needs.prepare.outputs.signed != 'true'
         run: |
           set -e
           SAFE=$(cat out/safe-name.txt)
@@ -152,6 +173,7 @@ jobs:
           echo "$P8" | base64 -d > "$RUNNER_TEMP/AuthKey.p8"
           cd out/ios/App
           sed -i '' "s/CURRENT_PROJECT_VERSION = 1;/CURRENT_PROJECT_VERSION = ${{ github.run_number }};/" App.xcodeproj/project.pbxproj
+          sed -i '' "s/MARKETING_VERSION = 1.0;/MARKETING_VERSION = 1.0.${{ needs.prepare.outputs.version }};/" App.xcodeproj/project.pbxproj
           AUTH=(-allowProvisioningUpdates -authenticationKeyPath "$RUNNER_TEMP/AuthKey.p8" -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER")
           xcodebuild archive -workspace App.xcworkspace -scheme App -configuration Release -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/App.xcarchive" DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Automatic "${AUTH[@]}"
           cat > "$RUNNER_TEMP/export.plist" <<PLIST
@@ -168,9 +190,41 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: dist-ios, path: dist }
 
+  desktop:
+    name: Windows app
+    needs: prepare
+    if: needs.prepare.outputs.desktop == 'true'
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: web, path: out }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Build the Windows installer
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          set -e
+          SAFE=$(cat out/safe-name.txt)
+          mkdir -p dist app
+          cp -r out/www app/www
+          cp out/icon.png app/icon.png
+          cp out/desktop-package.json app/package.json
+          cp desktop/main.js app/main.js
+          cd app
+          npm i --save-dev electron@33.2.0 electron-builder@25.1.8
+          npx electron-builder --win nsis --x64 --publish never
+          cp release/*.exe "../dist/$SAFE.exe"
+      - uses: actions/upload-artifact@v4
+        with: { name: dist-desktop, path: dist }
+
   publish:
     name: Publish files
-    needs: [prepare, android, ios]
+    needs: [prepare, android, ios, desktop]
     if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
@@ -180,7 +234,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           JOB_ID: ${{ inputs.job_id }}
-          APP_NAME: ${{ inputs.app_name }}
         run: |
           ls files >/dev/null 2>&1 || { echo "::error::No app files were produced."; exit 1; }
-          gh release create "job-$JOB_ID" files/* --repo "$GITHUB_REPOSITORY" --title "$APP_NAME" --notes "Build $JOB_ID"                           
+          gh release create "job-$JOB_ID" files/* --repo "$GITHUB_REPOSITORY" --title "Build $JOB_ID" --notes "Build $JOB_ID"
