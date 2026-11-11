@@ -5,7 +5,8 @@ const GH_RE = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+?(\.git)?\/?$/;
 const START_RE = /^\/?[\w\-./]*(\?[\w\-=&.%]*)?(#[\w\-\/=&.%]*)?$/;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const S = { src: "repo", icon: null, thumb: null, iconInfo: null, zip: null, repo: null, pick: null, repos: [], connected: false, reuse: null, job: null, shareId: "", version: 1, files: {}, warn: [], targets: [], started: false };
+const S = { src: "repo", icon: null, thumb: null, iconInfo: null, zip: null, repo: null, pick: null, repos: [], connected: false, reuse: null, job: null, shareId: "", version: 1, files: {}, warn: [], targets: [], started: false, running: false };
+let pollToken = 0;
 
 const TYPES = {
   apk: ["fa-brands fa-android", "Android APK", "Install directly on a phone"],
@@ -27,12 +28,12 @@ const stepsFor = (t) => [
   ["publish", "fa-solid fa-box-archive", "Packaging files"],
 ];
 
-const toast = (t) => {
+const toast = (t, ms = 4500) => {
   const e = $("toast");
   e.textContent = t;
   e.style.display = "block";
   clearTimeout(toast.t);
-  toast.t = setTimeout(() => (e.style.display = "none"), 4500);
+  toast.t = setTimeout(() => (e.style.display = "none"), ms);
 };
 
 async function sha(t) {
@@ -130,7 +131,26 @@ async function loadGithub() {
   } catch (e) { toast(e.message); }
 }
 
-$("ghConnectBtn").onclick = () => (location.href = "/api/gh/login");
+function ghReason(why) {
+  const m = {
+    state: "The login session expired. Use the same browser and try again.",
+    denied: "GitHub access was not allowed. Tap Connect GitHub and choose Authorize.",
+    incorrect_client_credentials: "GITHUB_CLIENT_ID or GITHUB_CLIENT_SECRET is wrong in Cloudflare.",
+    redirect_uri_mismatch: "The callback URL in your GitHub OAuth App must be exactly " + location.origin + "/api/gh/callback",
+    bad_verification_code: "The login code expired. Tap Connect GitHub again.",
+  };
+  return m[why] || "GitHub connection failed" + (why ? " (" + why + ")" : "") + ". Try again.";
+}
+
+$("ghConnectBtn").onclick = async () => {
+  try {
+    const r = await fetch("/api/health", { cache: "no-store" });
+    const h = await r.json();
+    if (!h.GITHUB_CLIENT_ID || !h.GITHUB_CLIENT_SECRET) return toast("GitHub login is not set up. Add GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in Cloudflare, then deploy again.", 9000);
+    if (!h.TOKEN_KEY) return toast("TOKEN_KEY is missing or is not 64 characters (0-9 and a-f). Fix it in Cloudflare, then deploy again.", 9000);
+  } catch { return toast("The server files are not working. Check that functions/api/health.js and functions/api/gh/login.js exist, then deploy again.", 9000); }
+  location.href = "/api/gh/login";
+};
 $("repoSearch").oninput = renderRepos;
 $("repoList").onclick = (e) => {
   const b = e.target.closest(".repo");
@@ -301,6 +321,37 @@ function branchValue() {
   return "";
 }
 
+const WORK_KEY = "idt_work";
+const WORK_DAYS = 7;
+
+function loadWork() {
+  try { return JSON.parse(localStorage.getItem(WORK_KEY) || "null"); } catch { return null; }
+}
+function setWork(w) {
+  try { localStorage.setItem(WORK_KEY, JSON.stringify(w)); } catch {}
+}
+function patchWork(p) {
+  const w = loadWork();
+  if (w) setWork({ ...w, ...p });
+}
+function clearWork() {
+  try { localStorage.removeItem(WORK_KEY); } catch {}
+}
+
+function formSnapshot() {
+  return {
+    src: $("src").value.trim(),
+    branch: $("branch").value.trim(),
+    siteUrl: $("siteUrl").value.trim(),
+    zipName: S.zip ? S.zip.name : "",
+    name: $("name").value.trim(),
+    pkg: $("pkg").value.trim(),
+    start: $("start").value.trim(),
+    api: $("api").value.trim(),
+    paths: $("paths").value.trim(),
+  };
+}
+
 async function generate() {
   const pkg = $("pkg").value.trim();
   if (S.reuse && S.reuse.package_id !== pkg) S.reuse = null;
@@ -332,30 +383,147 @@ async function generate() {
     S.job = j.id;
     S.shareId = j.shareId;
     S.version = j.version;
-    poll(0);
+    S.files = {};
+    S.warn = [];
+    setWork({
+      job: j.id,
+      shareId: j.shareId,
+      version: j.version,
+      targets: S.targets,
+      src: S.src,
+      repo: S.repo,
+      thumb: S.thumb || (S.reuse && S.reuse.icon) || null,
+      form: formSnapshot(),
+      state: "running",
+      jobs: {},
+      startedAt: Date.now(),
+    });
+    showNewWork();
+    startPoll();
   } catch (e) {
     $("progress").hidden = true;
     fail(e.message);
   }
 }
 
-async function poll(n) {
+function startPoll() {
+  const t = ++pollToken;
+  S.running = true;
+  poll(0, t);
+}
+
+async function poll(n, t) {
+  if (t !== pollToken) return;
   try {
     const j = await api("/api/status?id=" + S.job);
+    if (t !== pollToken) return;
     render(j.jobs);
+    patchWork({ jobs: j.jobs });
     if (j.state === "done") {
+      S.running = false;
       S.files = j.files || {};
       S.warn = j.warnings || [];
       await saveHistory();
+      if (t !== pollToken) return;
+      patchWork({ state: "done", files: S.files, warn: S.warn, logUrl: j.logUrl || "", saved: true });
       return finish(j.logUrl);
     }
-    if (j.state === "error") return fail(j.error + (j.logUrl ? " Details: " + j.logUrl : ""));
+    if (j.state === "error") {
+      S.running = false;
+      const m = j.error + (j.logUrl ? " Details: " + j.logUrl : "");
+      patchWork({ state: "error", error: m });
+      return fail(m);
+    }
   } catch (e) {
-    if (/PIN|Locked/i.test(e.message)) return fail(e.message);
+    if (/PIN|Locked/i.test(e.message)) { S.running = false; return fail(e.message); }
   }
-  if (n > 600) return fail("The build took too long. Check GitHub Actions.");
-  setTimeout(() => poll(n + 1), 4000);
+  if (n > 600) { S.running = false; return fail("The build took too long. Check GitHub Actions."); }
+  setTimeout(() => poll(n + 1, t), 4000);
 }
+
+function showNewWork() {
+  let b = $("newWork");
+  if (!b) {
+    b = document.createElement("button");
+    b.id = "newWork";
+    b.type = "button";
+    b.className = "btn";
+    b.innerHTML = '<i class="fa-solid fa-plus"></i> New work';
+    b.setAttribute("style", "position:fixed;left:16px;right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:40;box-shadow:0 10px 28px rgba(31,36,98,.35)");
+    b.onclick = newWork;
+    document.body.appendChild(b);
+  }
+  b.hidden = false;
+  $("app").style.paddingBottom = "96px";
+}
+
+function newWork() {
+  if (S.running && !confirm("A build is still running. Start new work anyway? The build keeps running on the server, but this page will stop showing it.")) return;
+  pollToken++;
+  S.running = false;
+  clearWork();
+  Object.assign(S, { icon: null, thumb: null, iconInfo: null, zip: null, repo: null, pick: null, reuse: null, job: null, shareId: "", version: 1, files: {}, warn: [], targets: [] });
+  ["src", "branch", "siteUrl", "name", "pkg", "start", "api", "repoSearch"].forEach((i) => ($(i).value = ""));
+  delete $("pkg").dataset.touched;
+  $("paths").value = "/api/";
+  $("zip").value = "";
+  $("zipName").textContent = "";
+  $("icon").value = "";
+  $("iconPrev").innerHTML = '<i class="fa-regular fa-image"></i>';
+  document.querySelectorAll("[name=t]").forEach((x) => (x.checked = x.value === "apk"));
+  ["srcErr", "nameErr", "pkgErr", "apiErr", "pathsErr", "startErr", "tgtErr", "iconErr", "genErr"].forEach((i) => ($(i).textContent = ""));
+  $("progress").hidden = true;
+  $("done").hidden = true;
+  $("gen").disabled = false;
+  $("repoDone").disabled = true;
+  setSrc("repo");
+  showChosen();
+  renderRepos();
+  updateIconNote();
+  $("newWork").hidden = true;
+  $("app").style.paddingBottom = "";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+  toast("Ready for new work.");
+}
+
+function restoreWork() {
+  const w = loadWork();
+  if (!w || !w.job) return;
+  if (Date.now() - (w.startedAt || 0) > WORK_DAYS * 864e5) { clearWork(); return; }
+  const f = w.form || {};
+  setSrc(w.src || "repo");
+  if (w.src === "repo" && w.repo) { S.repo = w.repo; showChosen(); }
+  $("src").value = f.src || "";
+  $("branch").value = f.branch || "";
+  $("siteUrl").value = f.siteUrl || "";
+  $("zipName").textContent = f.zipName || "";
+  $("name").value = f.name || "";
+  $("pkg").value = f.pkg || "";
+  $("pkg").dataset.touched = "1";
+  $("start").value = f.start || "";
+  $("api").value = f.api || "";
+  $("paths").value = f.paths || "/api/";
+  S.targets = w.targets || [];
+  document.querySelectorAll("[name=t]").forEach((x) => (x.checked = S.targets.includes(x.value)));
+  S.thumb = w.thumb || null;
+  if (S.thumb) $("iconPrev").innerHTML = `<img src="${esc(S.thumb)}" alt="">`;
+  S.job = w.job;
+  S.shareId = w.shareId;
+  S.version = w.version;
+  S.files = w.files || {};
+  S.warn = w.warn || [];
+  $("progress").hidden = false;
+  render(w.jobs || {});
+  showNewWork();
+  if (w.state === "done") return finish(w.logUrl, true);
+  if (w.state === "error") return fail(w.error || "The build failed.");
+  $("gen").disabled = true;
+  startPoll();
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && S.running && S.job) startPoll();
+});
 
 async function saveHistory() {
   const config = { sourceType: S.src, source: sourceValue(), branch: branchValue(), apiBase: $("api").value.trim(), apiPaths: $("paths").value.trim(), startPage: $("start").value.trim(), targets: S.targets };
@@ -375,7 +543,7 @@ async function saveHistory() {
   loadHistory();
 }
 
-function finish(logUrl) {
+function finish(logUrl, quiet) {
   const test = S.files.apk && /-debug\.apk$/.test(S.files.apk);
   let msg = $("name").value.trim() + " is ready (version " + S.version + ").";
   if (test) msg += " The APK is a test build because no Android release key is set up, so it cannot update an installed app.";
@@ -389,7 +557,7 @@ function finish(logUrl) {
   }).join("");
   $("shareLink").value = `${location.origin}/get.html?app=${S.shareId}`;
   $("done").hidden = false;
-  $("done").scrollIntoView({ behavior: "smooth", block: "start" });
+  if (!quiet) $("done").scrollIntoView({ behavior: "smooth", block: "start" });
   $("gen").disabled = false;
 }
 
@@ -455,11 +623,13 @@ $("history").onclick = async (e) => {
 function start() {
   if (S.started) return;
   S.started = true;
-  const gh = new URLSearchParams(location.search).get("gh");
+  const q = new URLSearchParams(location.search), gh = q.get("gh");
   if (gh) {
     history.replaceState(null, "", location.pathname);
-    toast(gh === "connected" ? "GitHub connected. Choose a repository." : "GitHub connection failed. Try again.");
+    if (gh === "connected") toast("GitHub connected. Choose a repository.");
+    else toast(ghReason(q.get("why")), 9000);
   }
   loadGithub();
   loadHistory();
+  restoreWork();
 }
