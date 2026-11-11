@@ -5,7 +5,7 @@ const GH_RE = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+?(\.git)?\/?$/;
 const START_RE = /^\/?[\w\-./]*(\?[\w\-=&.%]*)?(#[\w\-\/=&.%]*)?$/;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const S = { src: "repo", icon: null, thumb: null, zip: null, repo: null, pick: null, repos: [], connected: false, reuse: null, job: null, shareId: "", version: 1, files: {}, warn: [], targets: [], started: false };
+const S = { src: "repo", icon: null, thumb: null, iconInfo: null, zip: null, repo: null, pick: null, repos: [], connected: false, reuse: null, job: null, shareId: "", version: 1, files: {}, warn: [], targets: [], started: false };
 
 const TYPES = {
   apk: ["fa-brands fa-android", "Android APK", "Install directly on a phone"],
@@ -173,25 +173,84 @@ $("zip").onchange = function () {
   $("srcErr").textContent = "";
 };
 
+const ICON_SIZE = 1024;
+const ICON_HINT = "Any PNG, JPG or WebP image. It is resized to 1024×1024 automatically.";
+const iconHint = document.querySelector(".icon-row .hint");
+$("icon").accept = "image/png,image/jpeg,image/webp";
+
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("unreadable")); };
+    img.src = url;
+  });
+}
+
+async function makeIcon(file) {
+  const img = await loadImage(file);
+  const w = img.naturalWidth, h = img.naturalHeight;
+  if (!w || !h) throw new Error("unreadable");
+  const scale = Math.min(ICON_SIZE / w, ICON_SIZE / h);
+  const dw = Math.round(w * scale), dh = Math.round(h * scale);
+  const c = document.createElement("canvas");
+  c.width = c.height = ICON_SIZE;
+  const x = c.getContext("2d", { willReadFrequently: true });
+  x.imageSmoothingEnabled = true;
+  x.imageSmoothingQuality = "high";
+  x.drawImage(img, Math.round((ICON_SIZE - dw) / 2), Math.round((ICON_SIZE - dh) / 2), dw, dh);
+  const px = x.getImageData(0, 0, ICON_SIZE, ICON_SIZE).data;
+  let alpha = false;
+  for (let i = 3; i < px.length; i += 4) if (px[i] < 255) { alpha = true; break; }
+  const blob = await new Promise((r) => c.toBlob(r, "image/png"));
+  if (!blob) throw new Error("export");
+  const t = document.createElement("canvas");
+  t.width = t.height = 160;
+  t.getContext("2d").drawImage(c, 0, 0, 160, 160);
+  return { file: new File([blob], "icon.png", { type: "image/png" }), thumb: t.toDataURL("image/png"), alpha, padded: dw !== ICON_SIZE || dh !== ICON_SIZE, w, h };
+}
+
+function updateIconNote() {
+  const i = S.iconInfo;
+  let m = ICON_HINT, warn = false;
+  if (i) {
+    m = i.w === ICON_SIZE && i.h === ICON_SIZE ? "Ready. Your icon is 1024×1024." : `Resized from ${i.w}×${i.h} to 1024×1024.`;
+    if (i.w < ICON_SIZE && i.h < ICON_SIZE) m += " A larger image gives a sharper icon.";
+    if (i.padded) m += " The shape is kept, with empty space around it.";
+    if (i.alpha) m += " Transparent areas are kept as they are.";
+    if (i.alpha && document.querySelector("[name=t][value=ipa]").checked) {
+      m += " Apple does not accept transparent iPhone icons. For the iPhone file, use an icon with a background.";
+      warn = true;
+    }
+  }
+  iconHint.textContent = m;
+  iconHint.style.color = warn ? "var(--err)" : "";
+}
+
 $("pickIcon").onclick = () => $("icon").click();
-$("icon").onchange = function () {
+document.querySelectorAll("[name=t]").forEach((x) => x.addEventListener("change", updateIconNote));
+$("icon").onchange = async function () {
   const f = this.files[0];
   S.icon = null;
+  S.thumb = null;
+  S.iconInfo = null;
   $("iconErr").textContent = "";
+  updateIconNote();
   if (!f) return;
-  if (f.type !== "image/png") { $("iconErr").textContent = "Icon must be a PNG file."; return; }
-  const img = new Image();
-  img.onload = () => {
-    if (img.width !== img.height || img.width < 1024) { $("iconErr").textContent = `Icon must be square and at least 1024×1024 px. Yours is ${img.width}×${img.height}.`; return; }
-    const c = document.createElement("canvas");
-    c.width = c.height = 160;
-    c.getContext("2d").drawImage(img, 0, 0, 160, 160);
-    S.icon = f;
-    S.thumb = c.toDataURL("image/png");
-    $("iconPrev").innerHTML = `<img src="${S.thumb}" alt="">`;
-  };
-  img.src = URL.createObjectURL(f);
+  if (!/^image\/(png|jpeg|webp)$/.test(f.type) && !/\.(png|jpe?g|webp)$/i.test(f.name)) { $("iconErr").textContent = "Use a PNG, JPG or WebP image."; return; }
+  try {
+    const r = await makeIcon(f);
+    if (r.file.size > 3.9e6) { $("iconErr").textContent = "The icon file is too large after resizing. Use a simpler image."; return; }
+    S.icon = r.file;
+    S.thumb = r.thumb;
+    S.iconInfo = r;
+    $("iconPrev").innerHTML = `<img src="${r.thumb}" alt="">`;
+    updateIconNote();
+  } catch { $("iconErr").textContent = "This image could not be read. Try a PNG or JPG file."; }
+  this.value = "";
 };
+updateIconNote();
 
 function validate() {
   let ok = true;
@@ -368,8 +427,10 @@ function fillFrom(a) {
   document.querySelectorAll("[name=t]").forEach((x) => (x.checked = (c.targets || []).includes(x.value)));
   S.reuse = a;
   S.icon = null;
+  S.iconInfo = null;
   S.thumb = a.icon;
   $("iconPrev").innerHTML = a.icon ? `<img src="${esc(a.icon)}" alt="">` : '<i class="fa-regular fa-image"></i>';
+  updateIconNote();
   window.scrollTo({ top: 0, behavior: "smooth" });
   toast(c.sourceType === "zip" ? "Loaded. Choose the ZIP again, then tap Generate." : "Loaded. Change what you need and tap Generate.");
 }
