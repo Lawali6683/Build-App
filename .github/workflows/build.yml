@@ -95,9 +95,24 @@ jobs:
         run: |
           npm init -y >/dev/null
           npm i @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7 @capacitor/assets@3
-          mkdir -p assets && cp icon.png assets/icon-only.png
+          mkdir -p assets
+          node - <<'JS'
+          const sharp = require("sharp");
+          const clear = { r: 0, g: 0, b: 0, alpha: 0 };
+          (async () => {
+            const icon = await sharp("icon.png").ensureAlpha().png().toBuffer();
+            const fg = await sharp(icon).resize(680, 680, { fit: "contain", background: clear }).extend({ top: 172, bottom: 172, left: 172, right: 172, background: clear }).png().toBuffer();
+            await sharp(icon).resize(1024, 1024, { fit: "contain", background: clear }).png().toFile("assets/icon-only.png");
+            await sharp(fg).toFile("assets/icon-foreground.png");
+            await sharp({ create: { width: 1024, height: 1024, channels: 3, background: "#ffffff" } }).png().toFile("assets/icon-background.png");
+            const mark = await sharp(icon).resize(900, 900, { fit: "contain", background: clear }).png().toBuffer();
+            const splash = await sharp({ create: { width: 2732, height: 2732, channels: 3, background: "#ffffff" } }).composite([{ input: mark, gravity: "center" }]).png().toBuffer();
+            await sharp(splash).toFile("assets/splash.png");
+            await sharp(splash).toFile("assets/splash-dark.png");
+          })();
+          JS
           npx cap add android
-          npx capacitor-assets generate --android --iconBackgroundColor '#ffffff' --iconBackgroundColorDark '#ffffff'
+          npx capacitor-assets generate --android --iconBackgroundColor '#ffffff' --iconBackgroundColorDark '#ffffff' --splashBackgroundColor '#ffffff' --splashBackgroundColorDark '#ffffff'
           npx cap sync android
           sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/" android/app/build.gradle
           sed -i "s/versionName \"1.0\"/versionName \"1.0.${{ needs.prepare.outputs.version }}\"/" android/app/build.gradle
@@ -156,9 +171,22 @@ jobs:
         run: |
           npm init -y >/dev/null
           npm i @capacitor/core@7 @capacitor/cli@7 @capacitor/ios@7 @capacitor/assets@3
-          mkdir -p assets && cp icon.png assets/icon-only.png
+          mkdir -p assets
+          node - <<'JS'
+          const sharp = require("sharp");
+          const clear = { r: 0, g: 0, b: 0, alpha: 0 };
+          const white = { r: 255, g: 255, b: 255 };
+          (async () => {
+            const icon = await sharp("icon.png").ensureAlpha().png().toBuffer();
+            await sharp(icon).resize(1024, 1024, { fit: "contain", background: clear }).flatten({ background: white }).removeAlpha().png().toFile("assets/icon-only.png");
+            const mark = await sharp(icon).resize(900, 900, { fit: "contain", background: clear }).png().toBuffer();
+            const splash = await sharp({ create: { width: 2732, height: 2732, channels: 3, background: "#ffffff" } }).composite([{ input: mark, gravity: "center" }]).png().toBuffer();
+            await sharp(splash).toFile("assets/splash.png");
+            await sharp(splash).toFile("assets/splash-dark.png");
+          })();
+          JS
           npx cap add ios
-          npx capacitor-assets generate --ios
+          npx capacitor-assets generate --ios --splashBackgroundColor '#ffffff' --splashBackgroundColorDark '#ffffff'
           npx cap sync ios
       - name: Archive and export IPA
         env:
