@@ -2,6 +2,11 @@ import { json, authorize, gh, validId, releaseFiles } from "../_lib.js";
 
 const REPO = "Lawali6683/Build-App";
 const KEYS = { "Prepare project": "prepare", "Android app": "android", "iPhone app": "ios", "Windows app": "desktop", "Publish files": "publish" };
+const SKIPPED = {
+  ios: "iPhone signing is not set up on the server. Add IOS_API_KEY_P8_BASE64, IOS_API_KEY_ID, IOS_API_ISSUER_ID and IOS_TEAM_ID in the GitHub secrets.",
+  android: "The Android build did not run.",
+  desktop: "The Windows build did not run.",
+};
 const state = (j) => j.status !== "completed" ? (j.status === "in_progress" ? "running" : "pending")
   : j.conclusion === "success" ? "success" : j.conclusion === "skipped" ? "skipped" : "failed";
 
@@ -47,5 +52,8 @@ export async function onRequestGet({ request, env }) {
     for (const k of Object.keys(rf)) files[k] = rf[k].name;
     return json({ state: "done", jobs, files, warnings, logUrl: run.html_url, step: why.step, details: why.details });
   }
-  return json({ state: "error", jobs, error: `The build stopped at "${names[warnings[0]] || "workflow"}".`, logUrl: run.html_url, step: why.step, details: why.details });
+  const skipped = ["android", "ios", "desktop"].filter((k) => jobs[k] === "skipped");
+  const nothing = warnings.length === 1 && warnings[0] === "publish" && skipped.length > 0;
+  const error = nothing ? "Nothing was built. " + skipped.map((k) => SKIPPED[k]).join(" ") : `The build stopped at "${names[warnings[0]] || "workflow"}".`;
+  return json({ state: "error", jobs, error, logUrl: run.html_url, step: why.step, details: why.details });
 }
