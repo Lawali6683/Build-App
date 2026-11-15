@@ -17,7 +17,6 @@ jobs:
     outputs:
       apk: ${{ steps.flags.outputs.apk }}
       aab: ${{ steps.flags.outputs.aab }}
-      signed: ${{ steps.flags.outputs.signed }}
       android: ${{ steps.flags.outputs.android }}
       ios: ${{ steps.flags.outputs.ios }}
       desktop: ${{ steps.flags.outputs.desktop }}
@@ -43,23 +42,19 @@ jobs:
       - name: Decide what to build
         id: flags
         env:
-          KS: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           IOSK: ${{ secrets.IOS_API_KEY_ID }}
         run: |
           T=",$(node -p "require('./out/config.json').targets.join(',')"),"
           V=$(node -p "require('./out/config.json').version")
           want() { case "$T" in *",$1,"*) echo true;; *) echo false;; esac; }
           APK=$(want apk); AAB=$(want aab); IPA=$(want ipa); EXE=$(want exe)
-          SIGNED=false
-          if [ -n "$KS" ]; then SIGNED=true; fi
           ANDROID=false
-          if [ "$APK" = true ] || { [ "$AAB" = true ] && [ "$SIGNED" = true ]; }; then ANDROID=true; fi
+          if [ "$APK" = true ] || [ "$AAB" = true ]; then ANDROID=true; fi
           IOS=false
           if [ "$IPA" = true ] && [ -n "$IOSK" ]; then IOS=true; fi
           {
             echo "apk=$APK"
             echo "aab=$AAB"
-            echo "signed=$SIGNED"
             echo "android=$ANDROID"
             echo "ios=$IOS"
             echo "desktop=$EXE"
@@ -86,6 +81,11 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with: { name: web, path: out }
+      - uses: actions/checkout@v4
+        with:
+          ref: jobs
+          path: vault
+          sparse-checkout: keys
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
       - uses: actions/setup-java@v4
@@ -116,20 +116,65 @@ jobs:
           npx cap sync android
           sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/" android/app/build.gradle
           sed -i "s/versionName \"1.0\"/versionName \"1.0.${{ needs.prepare.outputs.version }}\"/" android/app/build.gradle
+      - name: Prepare the signing key
+        env:
+          VAULT_KEY: ${{ secrets.KEYSTORE_SECRET || secrets.TOKEN_KEY }}
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS_IN: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KS_ALIAS_IN: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS_IN: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -e
+          JKS="$RUNNER_TEMP/release.jks"
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$JKS"
+            PASS="$KS_PASS_IN"
+            ALIAS="$KS_ALIAS_IN"
+            KPASS="$KEY_PASS_IN"
+          else
+            if [ -z "$VAULT_KEY" ]; then echo "::error::TOKEN_KEY is missing, so the Android key cannot be created."; exit 1; fi
+            ENC="vault/keys/android.enc"
+            if [ -f "$ENC" ]; then
+              DATA=$(openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -pass env:VAULT_KEY -base64 -A -in "$ENC") || { echo "::error::The saved Android key could not be opened. TOKEN_KEY was changed after the key was created."; exit 1; }
+              echo "$DATA" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).jks' | base64 -d > "$JKS"
+              PASS=$(echo "$DATA" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).pass')
+              ALIAS=$(echo "$DATA" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).alias')
+              KPASS="$PASS"
+            else
+              PASS=$(openssl rand -hex 16)
+              ALIAS=idt
+              KPASS="$PASS"
+              echo "::add-mask::$PASS"
+              keytool -genkeypair -keystore "$JKS" -alias "$ALIAS" -keyalg RSA -keysize 2048 -validity 10000 -storepass "$PASS" -keypass "$PASS" -dname "CN=IDT, OU=Apps, O=IDT, C=NG"
+              mkdir -p vault/keys
+              node -e 'console.log(JSON.stringify({ jks: process.argv[1], pass: process.argv[2], alias: process.argv[3] }))' "$(base64 -w0 "$JKS")" "$PASS" "$ALIAS" | openssl enc -aes-256-cbc -pbkdf2 -iter 100000 -salt -pass env:VAULT_KEY -base64 -A > "$ENC"
+              SAVED=0
+              cd vault
+              git add keys/android.enc
+              git -c user.name=idt-bot -c user.email=bot@users.noreply.github.com commit -qm "android signing key"
+              for i in 1 2 3; do
+                if git push -q origin HEAD:jobs; then SAVED=1; break; fi
+                git pull -q --rebase origin jobs
+              done
+              cd ..
+              if [ "$SAVED" != 1 ]; then echo "::error::The new Android key could not be saved. Run the build again."; exit 1; fi
+            fi
+          fi
+          echo "::add-mask::$PASS"
+          {
+            echo "KS_FILE=$JKS"
+            echo "KS_PASS=$PASS"
+            echo "KS_ALIAS=$ALIAS"
+            echo "KEY_PASS=$KPASS"
+          } >> "$GITHUB_ENV"
       - name: Build and sign
-        if: needs.prepare.outputs.signed == 'true'
         env:
           WANT_APK: ${{ needs.prepare.outputs.apk }}
           WANT_AAB: ${{ needs.prepare.outputs.aab }}
-          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -e
           SAFE=$(cat out/safe-name.txt)
           mkdir -p dist
-          echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
           cd out/android
           TASKS=""
           if [ "$WANT_APK" = true ]; then TASKS="$TASKS assembleRelease"; fi
@@ -138,21 +183,12 @@ jobs:
           BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
           if [ "$WANT_APK" = true ]; then
             "$BT/zipalign" -p -f 4 app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/aligned.apk"
-            "$BT/apksigner" sign --ks "$RUNNER_TEMP/release.jks" --ks-pass env:KS_PASS --ks-key-alias "$KS_ALIAS" --key-pass env:KEY_PASS --out "$GITHUB_WORKSPACE/dist/$SAFE.apk" "$RUNNER_TEMP/aligned.apk"
+            "$BT/apksigner" sign --ks "$KS_FILE" --ks-pass env:KS_PASS --ks-key-alias "$KS_ALIAS" --key-pass env:KEY_PASS --out "$GITHUB_WORKSPACE/dist/$SAFE.apk" "$RUNNER_TEMP/aligned.apk"
           fi
           if [ "$WANT_AAB" = true ]; then
             cp app/build/outputs/bundle/release/app-release.aab "$GITHUB_WORKSPACE/dist/$SAFE.aab"
-            jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore "$RUNNER_TEMP/release.jks" -storepass:env KS_PASS -keypass:env KEY_PASS "$GITHUB_WORKSPACE/dist/$SAFE.aab" "$KS_ALIAS"
+            jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore "$KS_FILE" -storepass:env KS_PASS -keypass:env KEY_PASS "$GITHUB_WORKSPACE/dist/$SAFE.aab" "$KS_ALIAS"
           fi
-      - name: Build test APK
-        if: needs.prepare.outputs.signed != 'true'
-        run: |
-          set -e
-          SAFE=$(cat out/safe-name.txt)
-          mkdir -p dist
-          cd out/android
-          ./gradlew assembleDebug --no-daemon
-          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/dist/$SAFE-debug.apk"
       - uses: actions/upload-artifact@v4
         with: { name: dist-android, path: dist }
 
@@ -198,7 +234,7 @@ jobs:
           set -e
           SAFE=$(cat out/safe-name.txt)
           mkdir -p dist
-          echo "$P8" | base64 -d > "$RUNNER_TEMP/AuthKey.p8"
+          if printf '%s' "$P8" | grep -q "BEGIN"; then printf '%s\n' "$P8" > "$RUNNER_TEMP/AuthKey.p8"; else echo "$P8" | base64 -d > "$RUNNER_TEMP/AuthKey.p8"; fi
           cd out/ios/App
           sed -i '' "s/CURRENT_PROJECT_VERSION = 1;/CURRENT_PROJECT_VERSION = ${{ github.run_number }};/" App.xcodeproj/project.pbxproj
           sed -i '' "s/MARKETING_VERSION = 1.0;/MARKETING_VERSION = 1.0.${{ needs.prepare.outputs.version }};/" App.xcodeproj/project.pbxproj
